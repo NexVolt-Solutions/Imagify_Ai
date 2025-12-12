@@ -43,7 +43,7 @@ class PasswordMixin(BaseModel):
 
 
 # ---------------------------
-# Signup Schema (JSON + File)
+# Signup Schema
 # ---------------------------
 class SignupSchema(PasswordMixin):
     username: Annotated[str, StringConstraints(min_length=3, max_length=50)]

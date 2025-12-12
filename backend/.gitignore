@@ -39,3 +39,21 @@ static/
 htmlcov/
 .coverage
 .cache/
+
+# Visual Studio Code files
+.vscode/
+.cursor/
+
+# pycache
+*.pyc
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzw
+
+# alembic
+alembic/
+alembic.ini
+alembic/script.py.mako
+
