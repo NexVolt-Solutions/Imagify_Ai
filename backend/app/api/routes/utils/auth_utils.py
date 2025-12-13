@@ -1,26 +1,46 @@
 from datetime import datetime
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+
 from app.models import User, AuthProviderEnum
 
 
 # ---------------------------
-# Common User Fetching Logic
+# Fetch User by Email
 # ---------------------------
 def get_user_by_email(db: Session, email: str) -> User:
     email = email.lower().strip()
     user = db.query(User).filter(User.email == email).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
     return user
 
 
+# ---------------------------
+# Ensure Account is Local (Password-Based)
+# ---------------------------
 def ensure_local_account(user: User):
-    if user.provider != AuthProviderEnum.local:
+    if user.provider != AuthProviderEnum.LOCAL:
         raise HTTPException(
-            status_code=400,
-            detail="This account uses Google Sign-In and does not have a password.",
+            400,
+            "This account uses Google Sign-In and does not have a password.",
         )
+
+
+# ---------------------------
+# Ensure User is Active
+# ---------------------------
+def ensure_user_active(user: User):
+    if not user.is_active:
+        raise HTTPException(403, "Account is disabled")
+
+
+# ---------------------------
+# Ensure Email is Verified
+# ---------------------------
+def ensure_verified(user: User):
+    if not user.is_verified:
+        raise HTTPException(403, "Email not verified")
 
 
 # ---------------------------
@@ -32,7 +52,7 @@ def validate_verification_code(user: User, code: int):
         or not user.verification_expires_at
         or datetime.utcnow() > user.verification_expires_at
     ):
-        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+        raise HTTPException(400, "Invalid or expired verification code")
 
 
 # ---------------------------
@@ -44,5 +64,5 @@ def validate_reset_code(user: User, code: int):
         or not user.reset_expires_at
         or datetime.utcnow() > user.reset_expires_at
     ):
-        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+        raise HTTPException(400, "Invalid or expired reset code")
 

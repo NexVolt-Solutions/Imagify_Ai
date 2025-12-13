@@ -16,7 +16,7 @@ from uuid import UUID
 
 
 # ---------------------------
-# Shared Password Validation Mixin
+# Shared Password Validation
 # ---------------------------
 class PasswordMixin(BaseModel):
     password: Annotated[str, StringConstraints(min_length=8)]
@@ -70,13 +70,11 @@ def SignupForm(
     profile_image: UploadFile = File(...)
 ) -> SignupSchema:
 
-    # Validate username
     if len(username.strip()) < 3:
         raise RequestValidationError([
             {"loc": ["username"], "msg": "Username must be at least 3 characters long", "type": "value_error"}
         ])
 
-    # Validate file type
     if profile_image.content_type not in ALLOWED_IMAGE_TYPES:
         raise RequestValidationError([
             {
@@ -95,14 +93,14 @@ def SignupForm(
 
 
 # ---------------------------
-# Reset Password Schema (JSON)
+# Reset Password Schema
 # ---------------------------
 class ResetPasswordSchema(PasswordMixin):
     pass
 
 
 # ---------------------------
-# Reset Code Schema (JSON)
+# Reset Code Schema
 # ---------------------------
 class ResetCodeSchema(PasswordMixin):
     email: EmailStr
@@ -146,7 +144,7 @@ class ResendCodeSchema(BaseModel):
 
 
 # ---------------------------
-# Update Password Schema (JSON)
+# Update Password Schema
 # ---------------------------
 class UpdatePasswordSchema(PasswordMixin):
     old_password: str
@@ -196,6 +194,7 @@ class UserProfileResponse(BaseModel):
     email: EmailStr
     phone_number: Optional[str] = None
     is_verified: bool
+    is_active: bool  # ✅ NEW (matches models.py)
     profile_image_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -223,16 +222,18 @@ class TokenResponse(BaseModel):
 # Wallpaper Schemas
 # ---------------------------
 class WallpaperCreateSchema(BaseModel):
-    prompt: str = Field(..., min_length=3, max_length=255)
+    prompt: str = Field(..., min_length=3, max_length=350)
     size: str
     style: str
+    title: Optional[str] = None
+    ai_model: Optional[str] = None
 
     @field_validator("prompt")
     def validate_prompt_length(cls, v):
         if len(v.strip()) < 3:
             raise ValueError("Prompt must be at least 3 characters long")
-        if len(v) > 255:
-            raise ValueError("Prompt is too long. Please keep it under 255 characters.")
+        if len(v) > 300:
+            raise ValueError("Prompt is too long. Please keep it under 350 characters.")
         return v
 
 
@@ -241,6 +242,10 @@ class WallpaperResponseSchema(BaseModel):
     prompt: str
     size: str
     style: str
+    title: Optional[str] = None
+    ai_model: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    image_url: Optional[str] = None
     created_at: datetime
 
 
@@ -265,3 +270,4 @@ class AISuggestionSchema(BaseModel):
 
 class AISuggestionResponse(BaseModel):
     suggestion: str
+

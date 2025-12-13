@@ -70,7 +70,7 @@ def add_exception_handlers(app: FastAPI):
 
         return response
 
-    #  Validation Errors (Pydantic / FastAPI)
+    #  Validation Errors
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         messages = [err["msg"] for err in exc.errors()]

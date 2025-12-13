@@ -4,7 +4,6 @@ SQLAlchemy
 psycopg2-binary
 python-jose[cryptography]
 passlib[bcrypt]==1.7.4
-bcrypt==3.2.2
 python-dotenv
 alembic
 httpx
@@ -13,11 +12,17 @@ pydantic>=2.0,<3.0
 pydantic-settings
 email-validator
 fastapi-mail
+boto3
+jinja2
 
-#  Required for Google OAuth
+# Google OAuth
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
 
-#  Required for Replicate API
+# Replicate API
 replicate
+
+# Optional performance boost
+orjson
+

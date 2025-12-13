@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
-import os
-from uuid import uuid4
 
 from app.models import User
 from app.core.database import get_db
 from app.api.routes.utils import hash_utils, jwt_utils
+from app.api.routes.utils.s3_utils import upload_profile_image_to_s3
 from app.schemas import (
     MessageResponse,
     UpdatePasswordSchema,
@@ -15,7 +14,13 @@ from app.schemas import (
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-PROFILE_PIC_DIR = "static/profile_pics"
+
+# ---------------------------
+# Ensure user is active
+# ---------------------------
+def ensure_user_active(user: User):
+    if not user.is_active:
+        raise HTTPException(403, "Account is disabled")
 
 
 # ---------------------------
@@ -28,7 +33,9 @@ def get_current_user(
 ):
     user = db.query(User).filter(User.email == token["sub"]).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
+
+    ensure_user_active(user)
 
     return UserProfileResponse(
         id=str(user.id),
@@ -38,6 +45,7 @@ def get_current_user(
         email=user.email,
         phone_number=user.phone_number,
         is_verified=user.is_verified,
+        is_active=user.is_active,
         profile_image_url=user.profile_image_url,
         created_at=user.created_at,
         updated_at=user.updated_at,
@@ -55,7 +63,9 @@ def update_profile(
 ):
     user = db.query(User).filter(User.email == token["sub"]).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
+
+    ensure_user_active(user)
 
     # Update fields only if provided
     if payload.first_name is not None:
@@ -71,7 +81,7 @@ def update_profile(
         new_username = payload.username.strip()
         # Check if username is taken by someone else
         if db.query(User).filter(User.username == new_username, User.id != user.id).first():
-            raise HTTPException(status_code=400, detail="Username already taken")
+            raise HTTPException(400, "Username already taken")
         user.username = new_username
 
     db.commit()
@@ -91,19 +101,16 @@ async def update_profile_picture(
 ):
     user = db.query(User).filter(User.email == token["sub"]).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
 
-    # Save new image
-    ext = os.path.splitext(profile_image.filename or "")[1]
-    filename = f"{uuid4()}{ext}"
-    os.makedirs(PROFILE_PIC_DIR, exist_ok=True)
-    save_path = os.path.join(PROFILE_PIC_DIR, filename)
+    ensure_user_active(user)
 
-    with open(save_path, "wb") as f:
-        f.write(await profile_image.read())
+    # Upload to S3
+    file_bytes = await profile_image.read()
+    image_url = upload_profile_image_to_s3(file_bytes, profile_image.filename)
 
     # Update DB
-    user.profile_image_url = filename
+    user.profile_image_url = image_url
     db.commit()
     db.refresh(user)
 
@@ -121,11 +128,13 @@ def update_password(
 ):
     user = db.query(User).filter(User.email == token["sub"]).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
+
+    ensure_user_active(user)
 
     # Validate old password
     if not hash_utils.verify_password(payload.old_password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Old password is incorrect")
+        raise HTTPException(400, "Old password is incorrect")
 
     # Update password
     user.hashed_password = hash_utils.hash_password(payload.password)

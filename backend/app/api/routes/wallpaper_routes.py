@@ -1,14 +1,13 @@
-import os
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from fastapi.responses import FileResponse
 import replicate
 
 from app.models import Wallpaper, WallpaperStatusEnum, User
 from app.core.database import get_db
 from app.api.routes.utils import jwt_utils
+from app.api.routes.utils.s3_utils import upload_wallpaper_to_s3
 from app.schemas import (
     WallpaperCreateSchema,
     WallpaperResponseSchema,
@@ -20,9 +19,6 @@ from app.schemas import (
 from app.core.config import settings
 
 router = APIRouter(prefix="/wallpapers", tags=["Wallpapers"])
-
-WALLPAPER_DIR = "static/wallpapers"
-os.makedirs(WALLPAPER_DIR, exist_ok=True)
 
 replicate_client = replicate.Client(api_token=settings.REPLICATE_API_TOKEN)
 
@@ -58,7 +54,13 @@ STYLE_SUFFIXES = {
 # ---------------------------
 # Background Task: Generate Wallpaper
 # ---------------------------
-def generate_wallpaper_image(wallpaper_id: str, prompt: str, size: str, style: str, db: Session):
+def generate_wallpaper_image(
+    wallpaper_id: str,
+    prompt: str,
+    size: str,
+    style: str,
+    db: Session,
+):
     wallpaper = db.query(Wallpaper).filter(Wallpaper.id == wallpaper_id).first()
     if not wallpaper:
         return
@@ -81,25 +83,24 @@ def generate_wallpaper_image(wallpaper_id: str, prompt: str, size: str, style: s
         )
 
         if not output or not isinstance(output, list):
-            wallpaper.status = WallpaperStatusEnum.failed
+            wallpaper.status = WallpaperStatusEnum.FAILED
             db.commit()
             return
 
         file_obj = output[0]
         image_bytes = file_obj.read()
 
+        #  Upload generated wallpaper to S3
         filename = f"{uuid4()}.webp"
-        image_path = os.path.join(WALLPAPER_DIR, filename)
+        image_url = upload_wallpaper_to_s3(image_bytes, filename)
 
-        with open(image_path, "wb") as f:
-            f.write(image_bytes)
-
-        wallpaper.image_url = filename
-        wallpaper.status = WallpaperStatusEnum.completed
+        wallpaper.image_url = image_url
+        wallpaper.ai_model = "black-forest-labs/flux-schnell"
+        wallpaper.status = WallpaperStatusEnum.COMPLETED
         db.commit()
 
     except Exception:
-        wallpaper.status = WallpaperStatusEnum.failed
+        wallpaper.status = WallpaperStatusEnum.FAILED
         db.commit()
 
 
@@ -149,7 +150,9 @@ def create_wallpaper(
         prompt=payload.prompt,
         size=payload.size,
         style=payload.style,
-        status=WallpaperStatusEnum.pending,
+        title=payload.title,
+        ai_model=None,
+        status=WallpaperStatusEnum.PENDING,
     )
     db.add(wallpaper)
     db.commit()
@@ -190,7 +193,9 @@ def recreate_wallpaper(
         prompt=original.prompt,
         size=original.size,
         style=original.style,
-        status=WallpaperStatusEnum.pending,
+        title=original.title,
+        ai_model=None,
+        status=WallpaperStatusEnum.PENDING,
     )
     db.add(new_wallpaper)
     db.commit()
@@ -215,7 +220,6 @@ def recreate_wallpaper(
 def list_wallpapers(
     token: dict = Depends(jwt_utils.get_current_user),
     db: Session = Depends(get_db),
-    request: Request = None,
 ):
     user = db.query(User).filter(User.email == token["sub"]).first()
     if not user:
@@ -228,10 +232,7 @@ def list_wallpapers(
         .all()
     )
 
-    for wp in wallpapers:
-        if wp.image_url:
-            wp.full_image_url = f"{request.base_url}static/wallpapers/{wp.image_url}"
-
+    #  image_url already holds a full S3 / CloudFront URL
     return {"wallpapers": wallpapers}
 
 
@@ -243,7 +244,6 @@ def delete_wallpaper(
     wallpaper_id: str,
     token: dict = Depends(jwt_utils.get_current_user),
     db: Session = Depends(get_db),
-    request: Request = None,
 ):
     user = db.query(User).filter(User.email == token["sub"]).first()
     if not user:
@@ -258,13 +258,13 @@ def delete_wallpaper(
         prompt=wallpaper.prompt,
         size=wallpaper.size,
         style=wallpaper.style,
+        title=wallpaper.title,
+        ai_model=wallpaper.ai_model,
+        thumbnail_url=wallpaper.thumbnail_url,
+        image_url=wallpaper.image_url,
         created_at=wallpaper.created_at,
     )
 
-    if wallpaper.image_url:
-        image_path = os.path.join(WALLPAPER_DIR, wallpaper.image_url)
-        if os.path.exists(image_path):
-            os.remove(image_path)
 
     db.delete(wallpaper)
     db.commit()
@@ -274,14 +274,15 @@ def delete_wallpaper(
         "deleted_wallpaper": deleted_info,
     }
 
+
 # ---------------------------
 # Download Wallpaper
 # ---------------------------
-@router.get("/{wallpaper_id}/download")
+@router.get("/{wallpaper_id}/download", response_model=WallpaperResponseSchema)
 def download_wallpaper(
     wallpaper_id: str,
     token: dict = Depends(jwt_utils.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.email == token["sub"]).first()
     if not user:
@@ -294,14 +295,16 @@ def download_wallpaper(
     if not wallpaper.image_url:
         raise HTTPException(400, "Wallpaper image not generated yet")
 
-    file_path = os.path.join(WALLPAPER_DIR, wallpaper.image_url)
-
-    if not os.path.exists(file_path):
-        raise HTTPException(404, "Image file not found on server")
-
-    return FileResponse(
-        file_path,
-        media_type="image/webp",
-        filename=wallpaper.image_url
+    # Frontend can now directly download from S3 / CloudFront using image_url
+    return WallpaperResponseSchema(
+        id=wallpaper.id,
+        prompt=wallpaper.prompt,
+        size=wallpaper.size,
+        style=wallpaper.style,
+        title=wallpaper.title,
+        ai_model=wallpaper.ai_model,
+        thumbnail_url=wallpaper.thumbnail_url,
+        image_url=wallpaper.image_url,
+        created_at=wallpaper.created_at,
     )
 

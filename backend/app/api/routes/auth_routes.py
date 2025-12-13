@@ -8,8 +8,6 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 import random
-import os
-from uuid import uuid4
 from datetime import datetime, timedelta
 
 from google.oauth2 import id_token
@@ -37,12 +35,19 @@ from app.api.routes.utils.auth_utils import (
     validate_verification_code,
     validate_reset_code,
 )
+from app.api.routes.utils.s3_utils import upload_profile_image_to_s3
 from app.core.config import settings
 
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-PROFILE_PIC_DIR = "static/profile_pics"
+
+# ---------------------------
+# Ensure user is active
+# ---------------------------
+def ensure_user_active(user: User):
+    if not user.is_active:
+        raise HTTPException(403, "Account is disabled")
 
 
 # ---------------------------
@@ -53,7 +58,7 @@ async def register_user(
     form_data: SignupSchema = Depends(SignupForm),
     profile_image: UploadFile = File(...),
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks | None = None,
 ):
     username = form_data.username.strip()
     email = form_data.email.lower().strip()
@@ -63,16 +68,11 @@ async def register_user(
     if db.query(User).filter(User.username == username).first():
         raise HTTPException(400, "Username already taken")
 
-    # Save profile image
-    ext = os.path.splitext(profile_image.filename or "")[1]
-    filename = f"{uuid4()}{ext}"
-    os.makedirs(PROFILE_PIC_DIR, exist_ok=True)
-    save_path = os.path.join(PROFILE_PIC_DIR, filename)
-    with open(save_path, "wb") as f:
-        f.write(await profile_image.read())
+    # Upload profile image to S3
+    file_bytes = await profile_image.read()
+    image_url = upload_profile_image_to_s3(file_bytes, profile_image.filename)
 
     hashed_password = hash_utils.hash_password(form_data.password)
-
     code = random.randint(100000, 999999)
 
     new_user = User(
@@ -80,10 +80,10 @@ async def register_user(
         email=email,
         hashed_password=hashed_password,
         is_verified=False,
-        provider=AuthProviderEnum.local,
+        provider=AuthProviderEnum.LOCAL,
         verification_code=code,
         verification_expires_at=datetime.utcnow() + timedelta(minutes=15),
-        profile_image_url=filename,
+        profile_image_url=image_url,
     )
     db.add(new_user)
     db.commit()
@@ -94,7 +94,9 @@ async def register_user(
             email_utils.send_verification_code_email, new_user.email, code
         )
 
-    return {"message": "User registered successfully. Please check your email for the 6-digit code."}
+    return {
+        "message": "User registered successfully. Please check your email for the 6-digit code."
+    }
 
 
 # ---------------------------
@@ -103,6 +105,7 @@ async def register_user(
 @router.post("/verify", response_model=MessageResponse)
 def verify_email(payload: CodeVerifySchema, db: Session = Depends(get_db)):
     user = get_user_by_email(db, payload.email)
+    ensure_user_active(user)
 
     if user.is_verified:
         return {"message": "Email already verified"}
@@ -124,9 +127,10 @@ def verify_email(payload: CodeVerifySchema, db: Session = Depends(get_db)):
 def resend_verification_code(
     payload: ResendCodeSchema,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks | None = None,
 ):
     user = get_user_by_email(db, payload.email)
+    ensure_user_active(user)
 
     if user.is_verified:
         return {"message": "Email is already verified"}
@@ -150,13 +154,13 @@ def resend_verification_code(
 @router.post("/login", response_model=TokenResponse)
 def login_user(payload: LoginSchema, db: Session = Depends(get_db)):
     user = get_user_by_email(db, payload.email)
+    ensure_local_account(user)
+    ensure_user_active(user)
 
     if not user.hashed_password or not hash_utils.verify_password(
         payload.password, user.hashed_password
     ):
         raise HTTPException(400, "Invalid email or password")
-
-    ensure_local_account(user)
 
     if not user.is_verified:
         raise HTTPException(403, "Email not verified")
@@ -171,7 +175,9 @@ def login_user(payload: LoginSchema, db: Session = Depends(get_db)):
         existing.token = refresh_value
         existing.expires_at = expires_at
     else:
-        db.add(RefreshToken(user_id=user.id, token=refresh_value, expires_at=expires_at))
+        db.add(
+            RefreshToken(user_id=user.id, token=refresh_value, expires_at=expires_at)
+        )
 
     db.commit()
 
@@ -194,6 +200,8 @@ def refresh_access_token(refresh_token: str, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(404, "User not found")
 
+    ensure_user_active(user)
+
     new_access = jwt_utils.create_access_token({"sub": user.email})
 
     return TokenResponse(access_token=new_access, refresh_token=refresh_token)
@@ -206,10 +214,11 @@ def refresh_access_token(refresh_token: str, db: Session = Depends(get_db)):
 def forgot_password(
     payload: ForgotPasswordSchema,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks | None = None,
 ):
     user = get_user_by_email(db, payload.email)
     ensure_local_account(user)
+    ensure_user_active(user)
 
     reset_code = random.randint(100000, 999999)
     user.reset_code = reset_code
@@ -225,17 +234,23 @@ def forgot_password(
 
 
 # ---------------------------
-# Reset Password (JSON)
+# Reset Password
 # ---------------------------
 @router.post("/reset-password", response_model=MessageResponse)
 def reset_password(payload: ResetCodeSchema, db: Session = Depends(get_db)):
     user = get_user_by_email(db, payload.email)
     ensure_local_account(user)
+    ensure_user_active(user)
     validate_reset_code(user, payload.code)
 
     user.hashed_password = hash_utils.hash_password(payload.password)
     user.reset_code = None
     user.reset_expires_at = None
+
+    rt = db.query(RefreshToken).filter(RefreshToken.user_id == user.id).first()
+    if rt:
+        db.delete(rt)
+
     db.commit()
 
     return {"message": "Password reset successful. You can now log in."}
@@ -262,7 +277,7 @@ def google_sign_in(payload: GoogleAuthSchema, db: Session = Depends(get_db)):
 
         user = db.query(User).filter(User.email == email).first()
 
-        if user and user.provider != AuthProviderEnum.google:
+        if user and user.provider != AuthProviderEnum.GOOGLE:
             raise HTTPException(
                 400,
                 "This email is registered with password. Please use standard login.",
@@ -282,24 +297,28 @@ def google_sign_in(payload: GoogleAuthSchema, db: Session = Depends(get_db)):
                 email=email,
                 hashed_password=None,
                 is_verified=True,
-                provider=AuthProviderEnum.google,
+                provider=AuthProviderEnum.GOOGLE,
                 profile_image_url=payload.picture,
             )
             db.add(user)
             db.commit()
             db.refresh(user)
+        else:
+            ensure_user_active(user)
 
         access_token = jwt_utils.create_access_token({"sub": user.email})
 
-        refresh_value = str(uuid4())
-        expires_at = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        refresh_value = jwt_utils.create_refresh_token()
+        expires_at = jwt_utils.get_refresh_expiry()
 
         existing = db.query(RefreshToken).filter(RefreshToken.user_id == user.id).first()
         if existing:
             existing.token = refresh_value
             existing.expires_at = expires_at
         else:
-            db.add(RefreshToken(user_id=user.id, token=refresh_value, expires_at=expires_at))
+            db.add(
+                RefreshToken(user_id=user.id, token=refresh_value, expires_at=expires_at)
+            )
 
         db.commit()
 
@@ -312,7 +331,7 @@ def google_sign_in(payload: GoogleAuthSchema, db: Session = Depends(get_db)):
 # ---------------------------
 # Sign Out
 # ---------------------------
-@router.post("/Sign-out", response_model=MessageResponse)
+@router.post("/sign-out", response_model=MessageResponse)
 def logout_user(refresh_token: str, db: Session = Depends(get_db)):
     rt = db.query(RefreshToken).filter(RefreshToken.token == refresh_token).first()
     if rt:
