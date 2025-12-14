@@ -1,5 +1,5 @@
-from pydantic_settings import BaseSettings
-from pydantic import EmailStr
+from pydantic import BaseSettings, EmailStr
+from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -45,8 +45,8 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str
     AWS_REGION: str = "us-east-1"
     AWS_S3_BUCKET: str
-    AWS_S3_BASE_URL: str | None = None
-    CLOUDFRONT_DOMAIN: str | None = None
+    AWS_S3_BASE_URL: Optional[str] = None
+    CLOUDFRONT_DOMAIN: Optional[str] = None
 
     # ---------------------------
     # Replicate API Key

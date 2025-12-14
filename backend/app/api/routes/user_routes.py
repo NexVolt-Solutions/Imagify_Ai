@@ -29,7 +29,7 @@ def ensure_user_active(user: User):
 @router.get("/me", response_model=UserProfileResponse, summary="Get current user profile")
 def get_current_user(
     token: dict = Depends(jwt_utils.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.email == token["sub"]).first()
     if not user:
@@ -59,7 +59,7 @@ def get_current_user(
 def update_profile(
     payload: UpdateProfileSchema,
     token: dict = Depends(jwt_utils.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.email == token["sub"]).first()
     if not user:
@@ -79,9 +79,11 @@ def update_profile(
 
     if payload.username is not None:
         new_username = payload.username.strip()
+
         # Check if username is taken by someone else
         if db.query(User).filter(User.username == new_username, User.id != user.id).first():
             raise HTTPException(400, "Username already taken")
+
         user.username = new_username
 
     db.commit()
@@ -97,7 +99,7 @@ def update_profile(
 async def update_profile_picture(
     profile_image: UploadFile = File(...),
     token: dict = Depends(jwt_utils.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.email == token["sub"]).first()
     if not user:
@@ -124,7 +126,7 @@ async def update_profile_picture(
 def update_password(
     payload: UpdatePasswordSchema,
     token: dict = Depends(jwt_utils.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.email == token["sub"]).first()
     if not user:

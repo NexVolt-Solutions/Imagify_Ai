@@ -1,18 +1,18 @@
-from fastapi_mail import FastMail, MessageSchema
-from fastapi import HTTPException
-from app.core.email_config import MAIL_CONFIG
 import logging
 import asyncio
+from fastapi import HTTPException
+from fastapi_mail import FastMail, MessageSchema
+
+from app.core.email_config import MAIL_CONFIG
 
 fm = FastMail(MAIL_CONFIG)
-
 logger = logging.getLogger("email")
 
 
 # ---------------------------
 # Internal Helper
 # ---------------------------
-async def _send_email(subject: str, to_email: str, html: str, retries: int = 2):
+async def _send_email(subject: str, to_email: str, html: str, retries: int = 2) -> None:
     """
     Send an HTML email with retry logic and structured logging.
     """
@@ -28,7 +28,9 @@ async def _send_email(subject: str, to_email: str, html: str, retries: int = 2):
             await fm.send_message(message)
             return
         except Exception as e:
-            logger.error(f"[Email Error] Attempt {attempt+1} failed for {to_email}: {e}")
+            logger.error(
+                f"[Email Error] Attempt {attempt + 1} failed for {to_email}: {e}"
+            )
 
             if attempt == retries:
                 raise HTTPException(500, "Failed to send email")
@@ -64,7 +66,7 @@ def _build_html(title: str, message: str, code: int) -> str:
 # ---------------------------
 # Verification Email
 # ---------------------------
-async def send_verification_code_email(to_email: str, code: int):
+async def send_verification_code_email(to_email: str, code: int) -> None:
     subject = "Verify your AI-Wallpaper account"
     html = _build_html(
         title="Welcome to AI-Wallpaper!",
@@ -77,7 +79,7 @@ async def send_verification_code_email(to_email: str, code: int):
 # ---------------------------
 # Password Reset Email
 # ---------------------------
-async def send_password_reset_code_email(to_email: str, code: int):
+async def send_password_reset_code_email(to_email: str, code: int) -> None:
     subject = "Reset your AI-Wallpaper password"
     html = _build_html(
         title="Password Reset Request",

@@ -7,11 +7,11 @@ from pydantic import (
     EmailStr,
     Field,
     conint,
-    field_validator,
-    model_validator,
-    StringConstraints,
+    constr,
+    validator,
+    root_validator,
 )
-from typing import Optional, Annotated, List
+from typing import Optional, List
 from uuid import UUID
 
 
@@ -19,10 +19,10 @@ from uuid import UUID
 # Shared Password Validation
 # ---------------------------
 class PasswordMixin(BaseModel):
-    password: Annotated[str, StringConstraints(min_length=8)]
+    password: constr(min_length=8)
     confirm_password: str
 
-    @field_validator("password", mode="before")
+    @validator("password", pre=True)
     def validate_password(cls, value: str):
         if not isinstance(value, str):
             raise ValueError("Password must be a string")
@@ -35,18 +35,22 @@ class PasswordMixin(BaseModel):
 
         return value
 
-    @model_validator(mode="after")
-    def passwords_match(self):
-        if self.password != self.confirm_password:
+    @root_validator
+    def passwords_match(cls, values):
+        password = values.get("password")
+        confirm_password = values.get("confirm_password")
+
+        if password != confirm_password:
             raise ValueError("Passwords do not match")
-        return self
+
+        return values
 
 
 # ---------------------------
 # Signup Schema
 # ---------------------------
 class SignupSchema(PasswordMixin):
-    username: Annotated[str, StringConstraints(min_length=3, max_length=50)]
+    username: constr(min_length=3, max_length=50)
     email: EmailStr
 
 
@@ -114,7 +118,7 @@ class LoginSchema(BaseModel):
     email: EmailStr
     password: str
 
-    @field_validator("password")
+    @validator("password")
     def validate_password(cls, v):
         if not v.strip():
             raise ValueError("Password cannot be empty")
@@ -149,7 +153,7 @@ class ResendCodeSchema(BaseModel):
 class UpdatePasswordSchema(PasswordMixin):
     old_password: str
 
-    @field_validator("old_password")
+    @validator("old_password")
     def validate_old_password(cls, v):
         if not v.strip():
             raise ValueError("Old password cannot be empty")
@@ -162,14 +166,10 @@ class UpdatePasswordSchema(PasswordMixin):
 class UpdateProfileSchema(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    phone_number: Optional[
-        Annotated[str, StringConstraints(pattern=r"^\+?\d{7,15}$")]
-    ] = None
-    username: Optional[
-        Annotated[str, StringConstraints(min_length=3, max_length=50)]
-    ] = None
+    phone_number: Optional[constr(regex=r"^\+?\d{7,15}$")] = None
+    username: Optional[constr(min_length=3, max_length=50)] = None
 
-    @model_validator(mode="after")
+    @root_validator
     def validate_at_least_one_field(cls, values):
         if not any(values.values()):
             raise ValueError("At least one field must be provided for update")
@@ -194,7 +194,7 @@ class UserProfileResponse(BaseModel):
     email: EmailStr
     phone_number: Optional[str] = None
     is_verified: bool
-    is_active: bool  # ✅ NEW (matches models.py)
+    is_active: bool
     profile_image_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -228,7 +228,7 @@ class WallpaperCreateSchema(BaseModel):
     title: Optional[str] = None
     ai_model: Optional[str] = None
 
-    @field_validator("prompt")
+    @validator("prompt")
     def validate_prompt_length(cls, v):
         if len(v.strip()) < 3:
             raise ValueError("Prompt must be at least 3 characters long")
@@ -261,7 +261,7 @@ class WallpaperDeleteResponse(BaseModel):
 class AISuggestionSchema(BaseModel):
     prompt: str
 
-    @field_validator("prompt")
+    @validator("prompt")
     def validate_prompt(cls, v):
         if not v.strip():
             raise ValueError("Prompt cannot be empty")

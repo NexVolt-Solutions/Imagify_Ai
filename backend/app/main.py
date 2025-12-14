@@ -12,24 +12,35 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Global exception handlers
+# ---------------------------
+# Global Exception Handlers
+# ---------------------------
 add_exception_handlers(app)
 
-# CORS
+
+# ---------------------------
+# CORS Configuration
+# ---------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL],
+    allow_origins=[settings.FRONTEND_URL] if settings.FRONTEND_URL else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Health check for AWS ALB
+
+# ---------------------------
+# Health Check (for AWS ALB)
+# ---------------------------
 @app.get("/health")
-def health_check():
+def health_check() -> dict:
     return {"status": "ok"}
 
-# API v1 router
+
+# ---------------------------
+# API v1 Router
+# ---------------------------
 api_v1_router = APIRouter(prefix="/api/v1")
 
 api_v1_router.include_router(auth_routes.router)

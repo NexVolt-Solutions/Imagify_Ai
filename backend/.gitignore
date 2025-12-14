@@ -2,6 +2,11 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyc
+*.pyd
+*.pyw
+*.pyz
+*.pyzw
 
 # Virtual environment
 venv/
@@ -9,9 +14,13 @@ ENV/
 env/
 *.env
 .env
+.env.*
+!env.example
 
-# PyCharm project files
+# IDE files
 .idea/
+.vscode/
+.cursor/
 
 # OS-specific files
 .DS_Store
@@ -21,7 +30,7 @@ Thumbs.db
 *.log
 *.tmp
 
-# Alembic migration cache
+# Alembic (ignore only generated migrations)
 alembic/versions/
 
 # Python egg and build artifacts
@@ -29,31 +38,24 @@ alembic/versions/
 dist/
 build/
 
-# Static/media files (optional if generated or large)
+# Static/media files (optional)
 static/
+uploads/
+media/
 
-# Database files (if using SQLite locally)
+# Database files (local only)
 *.db
+*.sqlite3
 
 # Test coverage reports
 htmlcov/
 .coverage
 .cache/
+.pytest_cache/
 
-# Visual Studio Code files
-.vscode/
-.cursor/
+# AWS local credentials
+.aws/
 
-# pycache
-*.pyc
-*.pyd
-*.pyw
-*.pyz
-*.pywz
-*.pyzw
-
-# alembic
-alembic/
-alembic.ini
-alembic/script.py.mako
+# Replicate cache (if any)
+replicate_cache/
 

@@ -1,28 +1,37 @@
-fastapi
-uvicorn[standard]
-SQLAlchemy
-psycopg2-binary
-python-jose[cryptography]
+fastapi==0.95.2
+uvicorn[standard]==0.22.0
+
+SQLAlchemy==1.4.52
+psycopg2-binary==2.9.9
+
+python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-python-dotenv
-alembic
-httpx
-python-multipart
-pydantic>=2.0,<3.0
-pydantic-settings
-email-validator
-fastapi-mail
-boto3
-jinja2
+
+python-dotenv==1.0.1
+alembic==1.13.1
+httpx==0.24.1
+python-multipart==0.0.6
+
+# Pydantic v1 (required)
+pydantic==1.10.13
+
+# Correct version for Pydantic v1
+fastapi-mail==1.2.8
+
+# Correct version for fastapi-mail compatibility
+email-validator==1.3.1
+
+boto3==1.34.0
+jinja2==3.1.2
 
 # Google OAuth
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
+google-auth==2.23.4
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.2.0
 
 # Replicate API
-replicate
+replicate==0.23.1
 
 # Optional performance boost
-orjson
+orjson==3.9.10
 

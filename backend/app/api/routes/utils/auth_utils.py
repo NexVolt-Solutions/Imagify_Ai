@@ -19,7 +19,7 @@ def get_user_by_email(db: Session, email: str) -> User:
 # ---------------------------
 # Ensure Account is Local (Password-Based)
 # ---------------------------
-def ensure_local_account(user: User):
+def ensure_local_account(user: User) -> None:
     if user.provider != AuthProviderEnum.LOCAL:
         raise HTTPException(
             400,
@@ -30,7 +30,7 @@ def ensure_local_account(user: User):
 # ---------------------------
 # Ensure User is Active
 # ---------------------------
-def ensure_user_active(user: User):
+def ensure_user_active(user: User) -> None:
     if not user.is_active:
         raise HTTPException(403, "Account is disabled")
 
@@ -38,7 +38,7 @@ def ensure_user_active(user: User):
 # ---------------------------
 # Ensure Email is Verified
 # ---------------------------
-def ensure_verified(user: User):
+def ensure_verified(user: User) -> None:
     if not user.is_verified:
         raise HTTPException(403, "Email not verified")
 
@@ -46,7 +46,7 @@ def ensure_verified(user: User):
 # ---------------------------
 # Verification Code Validation
 # ---------------------------
-def validate_verification_code(user: User, code: int):
+def validate_verification_code(user: User, code: int) -> None:
     if (
         user.verification_code != code
         or not user.verification_expires_at
@@ -58,7 +58,7 @@ def validate_verification_code(user: User, code: int):
 # ---------------------------
 # Reset Code Validation
 # ---------------------------
-def validate_reset_code(user: User, code: int):
+def validate_reset_code(user: User, code: int) -> None:
     if (
         user.reset_code != code
         or not user.reset_expires_at

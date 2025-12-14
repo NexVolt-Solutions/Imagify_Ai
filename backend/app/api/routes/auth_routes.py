@@ -55,10 +55,10 @@ def ensure_user_active(user: User):
 # ---------------------------
 @router.post("/register", response_model=MessageResponse)
 async def register_user(
+    background_tasks: BackgroundTasks,
     form_data: SignupSchema = Depends(SignupForm),
     profile_image: UploadFile = File(...),
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks | None = None,
 ):
     username = form_data.username.strip()
     email = form_data.email.lower().strip()
@@ -89,10 +89,9 @@ async def register_user(
     db.commit()
     db.refresh(new_user)
 
-    if background_tasks:
-        background_tasks.add_task(
-            email_utils.send_verification_code_email, new_user.email, code
-        )
+    background_tasks.add_task(
+        email_utils.send_verification_code_email, new_user.email, code
+    )
 
     return {
         "message": "User registered successfully. Please check your email for the 6-digit code."
@@ -125,9 +124,9 @@ def verify_email(payload: CodeVerifySchema, db: Session = Depends(get_db)):
 # ---------------------------
 @router.post("/resend-code", response_model=MessageResponse)
 def resend_verification_code(
+    background_tasks: BackgroundTasks,
     payload: ResendCodeSchema,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks | None = None,
 ):
     user = get_user_by_email(db, payload.email)
     ensure_user_active(user)
@@ -140,10 +139,9 @@ def resend_verification_code(
     user.verification_expires_at = datetime.utcnow() + timedelta(minutes=15)
     db.commit()
 
-    if background_tasks:
-        background_tasks.add_task(
-            email_utils.send_verification_code_email, user.email, new_code
-        )
+    background_tasks.add_task(
+        email_utils.send_verification_code_email, user.email, new_code
+    )
 
     return {"message": "A new verification code has been sent to your email"}
 
@@ -212,9 +210,9 @@ def refresh_access_token(refresh_token: str, db: Session = Depends(get_db)):
 # ---------------------------
 @router.post("/forgot-password", response_model=MessageResponse)
 def forgot_password(
+    background_tasks: BackgroundTasks,
     payload: ForgotPasswordSchema,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks | None = None,
 ):
     user = get_user_by_email(db, payload.email)
     ensure_local_account(user)
@@ -225,10 +223,9 @@ def forgot_password(
     user.reset_expires_at = datetime.utcnow() + timedelta(minutes=15)
     db.commit()
 
-    if background_tasks:
-        background_tasks.add_task(
-            email_utils.send_password_reset_code_email, user.email, reset_code
-        )
+    background_tasks.add_task(
+        email_utils.send_password_reset_code_email, user.email, reset_code
+    )
 
     return {"message": "Password reset code sent to your email"}
 

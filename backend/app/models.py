@@ -108,7 +108,7 @@ class Wallpaper(Base):
     size = Column(String(20), nullable=True)
     style = Column(String(50), nullable=True)
 
-    # NEW optional fields
+    # Optional fields
     title = Column(String(100), nullable=True)
     ai_model = Column(String(50), nullable=True)
     thumbnail_url = Column(String(255), nullable=True)

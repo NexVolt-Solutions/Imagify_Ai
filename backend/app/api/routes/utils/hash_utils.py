@@ -1,10 +1,10 @@
 from passlib.context import CryptContext
 from typing import Optional
 
+
 # ---------------------------
 # Password Hashing Configuration
 # ---------------------------
-# bcrypt__rounds can be made configurable via environment variable if needed.
 pwd_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto",
