@@ -1,0 +1,106 @@
+# ---------------------------
+# Python bytecode and cache
+# ---------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# ---------------------------
+# Virtual environments
+# ---------------------------
+venv/
+ENV/
+env/
+.env
+.env.*
+!env.example
+
+# ---------------------------
+# IDEs and editors
+# ---------------------------
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+.cursor/
+
+# ---------------------------
+# OS-specific files
+# ---------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------
+# Logs and temp files
+# ---------------------------
+*.log
+*.tmp
+*.bak
+*.swp
+
+# ---------------------------
+# Alembic migrations (ignore only generated versions if desired)
+# ---------------------------
+alembic/versions/
+
+# ---------------------------
+# Python egg and build artifacts
+# ---------------------------
+*.egg-info/
+dist/
+build/
+*.whl
+
+# ---------------------------
+# Static/media files
+# ---------------------------
+static/
+uploads/
+media/
+
+# ---------------------------
+# Database files
+# ---------------------------
+*.db
+*.sqlite3
+
+# ---------------------------
+# Test coverage and caches
+# ---------------------------
+htmlcov/
+.coverage
+.cache/
+.pytest_cache/
+.mypy_cache/
+.tox/
+
+# ---------------------------
+# AWS and other credentials
+# ---------------------------
+.aws/
+replicate_cache/
+*.key
+*.pem
+*.pub
+
+# ---------------------------
+# Ignore nested Git repositories
+# ---------------------------
+**/.git/
+
+# ---------------------------
+# Windows path/SSH leftovers
+# ---------------------------
+**/E:\*
+**/ssh
+**/ssh.pub
+
+# SSH keys / Windows paths
+*.key
+*.pem
+*.pub
+**/E:\*
+

@@ -1,0 +1,413 @@
+import logging
+import time
+from uuid import uuid4
+from typing import Dict, List
+
+import requests
+import replicate
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+)
+from sqlalchemy import distinct
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.core.database import get_db, SessionLocal
+from app.models import Wallpaper, WallpaperStatusEnum, User
+from app.schemas import (
+    WallpaperCreateSchema,
+    WallpaperResponseSchema,
+    WallpaperListSchema,
+    WallpaperDeleteResponse,
+    AISuggestionSchema,
+    AISuggestionResponse,
+)
+from app.api.routes.utils.jwt_utils import get_current_user
+from app.api.routes.utils.s3_utils import upload_wallpaper_to_s3
+
+# -------------------------------------------------------------------
+# Router & Client
+# -------------------------------------------------------------------
+
+router = APIRouter(prefix="/wallpapers", tags=["Wallpapers"])
+logger = logging.getLogger(__name__)
+
+replicate_client = replicate.Client(
+    api_token=settings.REPLICATE_API_TOKEN
+)
+
+# -------------------------------------------------------------------
+# Size Map
+# -------------------------------------------------------------------
+
+SIZE_MAP = {
+    "1:1": (1024, 1024),
+    "9:16_Portrait": (1440, 2560),
+    "16:9_Landscape": (2560, 1440),
+}
+
+STYLE_SUFFIXES = {
+    "Colorful": ", vibrant palette, crisp details, dynamic contrast, professional lighting",
+    "3D Render": ", realistic CGI, detailed materials, sharp textures, global illumination, studio lighting",
+    "Photorealistic": ", lifelike realism, natural lighting, DSLR depth of field, fine textures",
+    "Oil Painting": ", traditional oil painting, rich brushstrokes, textured canvas, fine art quality",
+    "Watercolor": ", soft watercolor wash, paper texture, gentle gradients, artistic clarity",
+    "Cyberpunk": ", neon glow, futuristic cityscape, high contrast, moody atmosphere",
+    "Fantasy": ", epic fantasy scene, magical lighting, cinematic atmosphere, detailed environment",
+    "Anime": ", anime frame, clean line art, vibrant colors, smooth shading, high-quality animation",
+    "Cartoon": ", playful cartoon style, bold outlines, flat colors, smooth shading",
+    "Steampunk": ", steampunk aesthetic, brass machinery, intricate gears, dramatic lighting",
+    "Pixel Art": ", retro pixelated style, 8-bit look, sharp edges, nostalgic game vibe",
+    "Low Poly": ", polygonal low-poly design, simplified geometry, clean lighting, stylized look",
+    "Isometric": ", isometric perspective, crisp details, game-style rendering, structured composition",
+    "Minimalist": ", minimalist design, flat colors, clean composition, simple shapes",
+    "Synthwave": ", retro synthwave, neon grids, glowing lights, 1980s futuristic vibe",
+    "Retro Futurism": ", vintage sci-fi aesthetic, bold retro colors, futuristic machines, surreal vibe",
+    "Solarpunk": ", eco-futuristic city, lush greenery, sustainable design, bright optimistic lighting",
+    "Game Art": ", stylized game concept art, sharp focus, vibrant atmosphere, cinematic composition"
+}
+
+
+# ---------------------------
+# All Styles 
+# ---------------------------
+@router.get("/styles", response_model=Dict[str, str])
+def get_styles():
+    """
+    Returns all available style suffixes.
+
+    Example response:
+    {
+        "Colorful": ", vibrant colors, high clarity, sharp focus, crisp details, professional lighting",
+        "3D Render": ", high-quality CGI, realistic materials, sharp textures, clean lighting",
+        "Anime": ", anime style, clean line art, vibrant colors, smooth shading"
+    }
+    """
+    return STYLE_SUFFIXES
+
+# -------------------------------------------------------------------
+# Background Task: Generate Wallpaper
+# -------------------------------------------------------------------
+
+def generate_wallpaper_image(
+    wallpaper_id: str,
+    prompt: str,
+    size: str,
+    style: str,
+    db_session_factory,
+    max_retries: int = 3,
+    timeout_seconds: int = 4,
+):
+    logger.info(f"Background task started for {wallpaper_id}")
+    db: Session = db_session_factory()
+
+    try:
+        wallpaper = (
+            db.query(Wallpaper)
+            .filter(Wallpaper.id == wallpaper_id)
+            .first()
+        )
+        if not wallpaper:
+            logger.warning("Wallpaper not found")
+            return
+
+        # Stage 1: Preparing
+        wallpaper.status = WallpaperStatusEnum.PREPARING
+        db.commit()
+
+        width, height = SIZE_MAP.get(size, (1024, 1024))
+        final_prompt = f"{prompt}{STYLE_SUFFIXES.get(style, '')}"
+
+        # Stage 2: Rendering
+        wallpaper.status = WallpaperStatusEnum.RENDERING
+        db.commit()
+
+        output = None
+
+        for attempt in range(max_retries):
+            try:
+                start = time.time()
+                output = replicate_client.run(
+                    "black-forest-labs/flux-schnell",
+                    input={
+                        "prompt": final_prompt,
+                        "width": width,
+                        "height": height,
+                        "num_outputs": 1,
+                        "num_inference_steps": 4,
+                    },
+                )
+
+                if not output or time.time() - start > timeout_seconds:
+                    raise TimeoutError()
+
+                break
+
+            except Exception as e:
+                logger.warning(
+                    f"Retry {attempt + 1} for {wallpaper_id}: {e}"
+                )
+                wallpaper.status = WallpaperStatusEnum.RETRYING
+                db.commit()
+                time.sleep(2 * (attempt + 1))
+
+        if not output or not isinstance(output, list):
+            wallpaper.status = WallpaperStatusEnum.FAILED
+            db.commit()
+            return
+
+        # Stage 3: Finalizing
+        wallpaper.status = WallpaperStatusEnum.FINALIZING
+        db.commit()
+
+        file_obj = output[0]
+
+        if isinstance(file_obj, str):
+            response = requests.get(file_obj, timeout=10)
+            response.raise_for_status()
+            image_bytes = response.content
+        else:
+            image_bytes = file_obj.read()
+
+        filename = f"{uuid4()}.webp"
+        image_url = upload_wallpaper_to_s3(image_bytes, filename)
+
+        wallpaper.image_url = image_url
+        wallpaper.status = WallpaperStatusEnum.COMPLETED
+        db.commit()
+
+        logger.info(f"Wallpaper {wallpaper_id} completed")
+
+    except Exception as e:
+        logger.error(f"Wallpaper generation failed: {e}")
+        wallpaper.status = WallpaperStatusEnum.FAILED
+        db.commit()
+
+    finally:
+        db.close()
+
+# -------------------------------------------------------------------
+# AI Suggestion
+# -------------------------------------------------------------------
+
+@router.post("/suggest", response_model=AISuggestionResponse)
+def suggest_prompt(
+    payload: AISuggestionSchema,
+    current_user: User = Depends(get_current_user),
+):
+    system_prompt = (
+        "Rewrite the user's idea into a vivid, cinematic image-generation prompt. "
+        "Return ONLY the rewritten prompt text. "
+        "Do NOT add explanations, introductions, labels, or quotes."
+    )
+
+    try:
+        response = replicate_client.run(
+            "meta/meta-llama-3-70b-instruct",
+            input={
+                "prompt": f"{system_prompt}\nUser prompt: {payload.prompt}",
+                "temperature": 0.7,
+                "max_tokens": 150,
+                "top_p": 0.9,
+            },
+        )
+    except Exception as e:
+        raise HTTPException(500, f"AI suggestion failed: {e}")
+
+    enhanced = "".join(response).strip().strip('"')[:345]
+    return AISuggestionResponse(suggestion=enhanced)
+
+
+# -------------------------------------------------------------------
+# Create Wallpaper
+# -------------------------------------------------------------------
+
+@router.post("/", response_model=WallpaperResponseSchema)
+def create_wallpaper(
+    background_tasks: BackgroundTasks,
+    payload: WallpaperCreateSchema,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    wallpaper = Wallpaper(
+        user_id=current_user.id,
+        prompt=payload.prompt,
+        size=payload.size,
+        style=payload.style,
+        status=WallpaperStatusEnum.PENDING,
+    )
+
+    db.add(wallpaper)
+    db.commit()
+    db.refresh(wallpaper)
+
+    background_tasks.add_task(
+        generate_wallpaper_image,
+        wallpaper.id,
+        payload.prompt,
+        payload.size,
+        payload.style,
+        lambda: SessionLocal(),
+    )
+
+    return wallpaper
+
+# -------------------------------------------------------------------
+# Recreate Wallpaper
+# -------------------------------------------------------------------
+
+@router.post("/{wallpaper_id}/recreate", response_model=WallpaperResponseSchema)
+def recreate_wallpaper(
+    wallpaper_id: str,
+    payload: WallpaperCreateSchema,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    original = (
+        db.query(Wallpaper)
+        .filter(Wallpaper.id == wallpaper_id)
+        .first()
+    )
+
+    if not original or original.user_id != current_user.id:
+        raise HTTPException(404, "Wallpaper not found")
+
+    new_wallpaper = Wallpaper(
+        user_id=current_user.id,
+        prompt=payload.prompt,
+        size=payload.size,
+        style=payload.style,
+        status=WallpaperStatusEnum.PENDING,
+    )
+
+    db.add(new_wallpaper)
+    db.commit()
+    db.refresh(new_wallpaper)
+
+    background_tasks.add_task(
+        generate_wallpaper_image,
+        new_wallpaper.id,
+        payload.prompt, 
+        payload.size,  
+        payload.style,  
+        lambda: SessionLocal(),
+    )
+
+    return new_wallpaper
+
+
+# -------------------------------------------------------------------
+# List Wallpapers
+# -------------------------------------------------------------------
+
+@router.get("/", response_model=WallpaperListSchema)
+def list_wallpapers(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    page: int = 1,
+    limit: int = 10,
+):
+    offset = (page - 1) * limit
+
+    wallpapers = (
+        db.query(Wallpaper)
+        .filter(Wallpaper.user_id == current_user.id)
+        .order_by(Wallpaper.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return {"wallpapers": wallpapers}
+
+# -------------------------------------------------------------------
+# Grouped Wallpapers
+# -------------------------------------------------------------------
+
+@router.get("/grouped", response_model=Dict[str, List[WallpaperResponseSchema]])
+def get_wallpapers_grouped(
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
+):
+    styles = [
+        s[0]
+        for s in db.query(distinct(Wallpaper.style)).all()
+        if s[0]
+    ]
+
+    offset = (page - 1) * limit
+    grouped: Dict[str, List[WallpaperResponseSchema]] = {}
+
+    for style in styles:
+        grouped[style] = (
+            db.query(Wallpaper)
+            .filter(
+                Wallpaper.style == style,
+                Wallpaper.status == WallpaperStatusEnum.COMPLETED,
+            )
+            .order_by(Wallpaper.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+    return grouped
+
+# -------------------------------------------------------------------
+# Delete Wallpaper
+# -------------------------------------------------------------------
+
+@router.delete("/{wallpaper_id}", response_model=WallpaperDeleteResponse)
+def delete_wallpaper(
+    wallpaper_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    wallpaper = (
+        db.query(Wallpaper)
+        .filter(Wallpaper.id == wallpaper_id)
+        .first()
+    )
+
+    if not wallpaper or wallpaper.user_id != current_user.id:
+        raise HTTPException(404, "Wallpaper not found")
+
+    deleted = WallpaperResponseSchema.from_orm(wallpaper)
+
+    db.delete(wallpaper)
+    db.commit()
+
+    return {
+        "message": "Wallpaper deleted successfully",
+        "deleted_wallpaper": deleted,
+    }
+
+# -------------------------------------------------------------------
+# Download Wallpaper
+# -------------------------------------------------------------------
+
+@router.get("/{wallpaper_id}/download", response_model=WallpaperResponseSchema)
+def download_wallpaper(
+    wallpaper_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    wallpaper = (
+        db.query(Wallpaper)
+        .filter(Wallpaper.id == wallpaper_id)
+        .first()
+    )
+
+    if not wallpaper or wallpaper.user_id != current_user.id:
+        raise HTTPException(404, "Wallpaper not found")
+
+    if not wallpaper.image_url:
+        raise HTTPException(400, "Wallpaper not generated yet")
+
+    return WallpaperResponseSchema.from_orm(wallpaper)

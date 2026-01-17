@@ -1,0 +1,87 @@
+import os
+import sys
+from logging.config import fileConfig
+
+from sqlalchemy import pool, create_engine
+from alembic import context
+from dotenv import load_dotenv
+
+# ---------------------------------------------------------
+#  Ensure Alembic can import your FastAPI app modules
+# ---------------------------------------------------------
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # backend/
+sys.path.append(BASE_DIR)
+
+# ---------------------------------------------------------
+#  Load environment variables from backend/.env
+# ---------------------------------------------------------
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+# ---------------------------------------------------------
+#  Alembic Config
+# ---------------------------------------------------------
+config = context.config
+
+# Setup logging
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+# ---------------------------------------------------------
+#  Import your SQLAlchemy models
+# ---------------------------------------------------------
+from app.models import Base
+target_metadata = Base.metadata
+
+# ---------------------------------------------------------
+#  Load DB URL from .env
+# ---------------------------------------------------------
+database_url = os.getenv("DATABASE_URI")
+if not database_url:
+    raise ValueError("DATABASE_URI not found in backend/.env")
+
+print(f"[Alembic] Using database URI: {database_url}")
+config.set_main_option("sqlalchemy.url", database_url)
+
+
+# ---------------------------------------------------------
+#  Offline migration mode
+# ---------------------------------------------------------
+def run_migrations_offline() -> None:
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+        compare_type=True,
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+# ---------------------------------------------------------
+#  Online migration mode
+# ---------------------------------------------------------
+def run_migrations_online() -> None:
+    connectable = create_engine(database_url, poolclass=pool.NullPool, future=True)
+
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+# ---------------------------------------------------------
+#  Run migrations
+# ---------------------------------------------------------
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+
