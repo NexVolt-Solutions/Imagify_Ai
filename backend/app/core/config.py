@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 
 
-ENV_PATH = "/home/ubuntu/Genwalls_backend/backend/.env"
+ENV_PATH = "/home/ubuntu/Imagify_Ai_backend/backend/.env"
 load_dotenv(ENV_PATH)
 
 

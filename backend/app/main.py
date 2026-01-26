@@ -7,8 +7,8 @@ from app.core.config import settings
 
 
 app = FastAPI(
-    title="AI-Wallpaper Backend",
-    description="Backend service for AI-Wallpaper mobile app",
+    title="ImagifyAI Backend",
+    description="Backend service for ImagifyAI app",
     version="1.0.0",
 )
 
@@ -17,18 +17,16 @@ app = FastAPI(
 # ---------------------------
 add_exception_handlers(app)
 
-
 # ---------------------------
 # CORS Configuration
 # ---------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL] if settings.FRONTEND_URL else ["*"],
+    allow_origins=["https://api.imagifyai.io"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ---------------------------
 # Health Check (for AWS ALB)
@@ -36,7 +34,6 @@ app.add_middleware(
 @app.get("/health")
 def health_check() -> dict:
     return {"status": "ok"}
-
 
 # ---------------------------
 # API v1 Router
@@ -48,4 +45,3 @@ api_v1_router.include_router(user_routes.router)
 api_v1_router.include_router(wallpaper_routes.router)
 
 app.include_router(api_v1_router)
-
